@@ -15,11 +15,12 @@ import torch.nn as nn
 import torch.utils.data
 
 BATCH_SIZE = 64
-N_MFCC = 40
+N_MFCC = 30# mfcc extracted
 TRAIN_TEST_SPLIT = 0.7
 LEARNING_RATE = 0.005
-EPOCHS = 100
-LIM_SIZE = 500
+EPOCHS = 1000
+LIM_SIZE = 500#limit sample size for each gender
+MFCC_LIM_SIZE = 100#make sure mfcc used in a row divides this
 
 torch.set_default_dtype(torch.float32)
 
@@ -88,13 +89,11 @@ class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(in_features=N_MFCC, out_features=64),
+            nn.Linear(in_features=3*N_MFCC, out_features=128),
             nn.LeakyReLU(-0.2),
-            nn.Dropout(0.1),
-            nn.Linear(in_features=64, out_features=32),
+            nn.Linear(in_features=128, out_features=64),
             nn.LeakyReLU(-0.2),
-            nn.Dropout(0.1),
-            nn.Linear(in_features=32, out_features=2)
+            nn.Linear(in_features=64, out_features=2)
         )
 
     def forward(self, x):
@@ -123,21 +122,36 @@ for audio in tqdm(os.listdir("wavfinal")):#[4150:5100]): #
     elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
         male_voices.append(librosa.load("wavfinal/" + audio))
 
-male_features = np.zeros(shape=(1, N_MFCC)) # initialize mfcc arrays
-female_features = np.zeros(shape=(1, N_MFCC))
+male_features = np.zeros(shape=(3*N_MFCC, 1)) # initialize mfcc arrays
+female_features = np.zeros(shape=(3*N_MFCC, 1))
 
 #extract mfcc
 for female_voice in tqdm(female_voices):
     content, sr = female_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:100]#so that SVC doesnt take forever to fit
-    female_features = np.vstack((female_features, np.transpose(extract_mfcc)))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE]#so that SVC doesnt take forever to fit
+    if extract_mfcc.shape[1] < MFCC_LIM_SIZE:
+        continue
+    delta1 = librosa.feature.delta(extract_mfcc)
+    delta2 = librosa.feature.delta(extract_mfcc, order=2)
+    extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
+    female_features = np.hstack((female_features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
 for male_voice in tqdm(male_voices):
     content, sr = male_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)
-    male_features = np.vstack((male_features, np.transpose(extract_mfcc)))
+    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE]
+    if extract_mfcc.shape[1] < MFCC_LIM_SIZE:
+        continue
+    delta1 = librosa.feature.delta(extract_mfcc)
+    delta2 = librosa.feature.delta(extract_mfcc, order=2)
+    extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
+    male_features = np.hstack((male_features, extract_mfcc))
 
+female_features = female_features.transpose()
+male_features = male_features.transpose()
 female_features = female_features[1:]#remove first vector(empty)
 male_features = male_features[1:]
+# female_features = female_features.reshape(-1, 3*3*N_MFCC)
+# male_features = male_features.reshape(-1, 3*3*N_MFCC)
+print(male_features.shape)
 
 X = np.vstack((male_features, female_features))#combine both genders in one dataset
 X = (X - X.min(axis=0))/(X.max(axis=0) - X.min(axis=0))# normalize 0-1
@@ -148,26 +162,26 @@ X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=0.7)
 #SVM approach
 #SVC uses mfcc from individual windows, not together in a sample
 
-clf = SVC(kernel='poly')
+clf = SVC(kernel='rbf')
 print("fitting")
 timesince = time.time()
-clf.fit(X_train[:50000], Y_train[:50000])
+clf.fit(X_train[:10000], Y_train[:10000])
 print("time in seconds:", time.time() - timesince, "\n")
 
 print("validating")
 timesince = time.time()
-print("score: ", clf.score(X_train[:50000], Y_train[:50000]))
+print("score: ", clf.score(X_train[:10000], Y_train[:10000]))
 print("time in seconds: ", time.time() - timesince, "\n")
 
 print("testing")
 timesince = time.time()
-print("score:", clf.score(X_test[:50000], Y_test[:50000]))
+print("score:", clf.score(X_test[:5000], Y_test[:5000]))
 print("time in seconds: ", time.time() - timesince, "\n")
 
 #confusion matrix and metrics
 
-predicted = clf.predict(X_test[:50000])
-c_d = metrics.confusion_matrix(Y_test[:50000], predicted)
+predicted = clf.predict(X_test[:5000])
+c_d = metrics.confusion_matrix(Y_test[:5000], predicted)
 c_d = c_d/1.0
 
 accuracy = (c_d[0, 0] + c_d[1, 1])/np.sum(c_d)
@@ -195,7 +209,6 @@ plt.show()
 #DNN approach
 
 dataset_full = Dataset(X, Y)
-print("first dataset point", dataset_full[0])
 train_test_split = int(len(dataset_full)*TRAIN_TEST_SPLIT)
 dataset_train, dataset_test = torch.utils.data.random_split(
     dataset_full,
@@ -265,7 +278,7 @@ for epoch in range(1, EPOCHS+1):
 
         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
-    if epoch % 10 == 0:
+    if epoch % 100 == 0:
         plts = []
         c = 0
         for key, value in metricsdict.items():
