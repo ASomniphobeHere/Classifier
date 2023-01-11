@@ -12,18 +12,18 @@ import time
 from librosa.feature import mfcc
 import torch
 import torch.nn as nn
+import torch.utils.data
 
 BATCH_SIZE = 64
-N_MFCC=40
-TRAIN_TEST_SPLIT=0.7
-LEARNING_RATE=0.01
-EPOCHS=100
+N_MFCC = 40
+TRAIN_TEST_SPLIT = 0.7
+LEARNING_RATE = 0.005
+EPOCHS = 100
+LIM_SIZE = 500
 
-# for samplem4a in tqdm(os.listdir(r"wav/males")):
-#     temp = AudioSegment.from_file("m4a/males/" + samplem4a, format="m4a")
-#     temp.export(("wav/males/" + samplem4a.split('.')[0] + ".wav"), format="wav")
+torch.set_default_dtype(torch.float32)
 
-def remove_silence(audiosample):
+def remove_silence(audiosample): #returns audio sample with each silence reduced to 100 ms
     audiochunks = split_on_silence(
         audiosample,
         min_silence_len=100,
@@ -65,13 +65,36 @@ class DataLoader:
         self.idx_batch += 1
         return batch
 
+class Dataset:
+    def __init__(self, X, Y):
+        super().__init__()
+
+        self.Y = Y
+        self.Y_prob = np.zeros((len(self.Y), 2))
+        idxes_range = range(len(self.Y))
+        self.Y_prob[idxes_range, self.Y] = 1
+        self.Y_prob = torch.Tensor(self.Y_prob)
+
+        self.X = X
+        self.X = torch.Tensor(self.X)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y_prob[idx]
+
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(in_features=N_MFCC, out_features=16),
-            nn.Sigmoid(),
-            nn.Linear(in_features=16, out_features=2)
+            nn.Linear(in_features=N_MFCC, out_features=64),
+            nn.LeakyReLU(-0.2),
+            nn.Dropout(0.1),
+            nn.Linear(in_features=64, out_features=32),
+            nn.LeakyReLU(-0.2),
+            nn.Dropout(0.1),
+            nn.Linear(in_features=32, out_features=2)
         )
 
     def forward(self, x):
@@ -79,10 +102,12 @@ class Model(torch.nn.Module):
         y_prim = torch.softmax(out, dim=-1)
         return y_prim
 
+
+# #export to wav and combine to one folder with labels, DO ONLY ONCE
 # for temp2 in tqdm(os.listdir(r"wav/females")):#[:50]):
 #     audio = remove_silence(AudioSegment.from_wav("wav/females/" + temp2))
 #     audio.export("wavfinal/f_"+temp2, "wav")
-
+# prepare starting dataset
 # for temp2 in tqdm(os.listdir(r"wav/males")):#[:50]):
 #     audio = remove_silence(AudioSegment.from_wav("wav/males/" + temp2))
 #     audio.export("wavfinal/m_"+temp2, "wav")
@@ -90,111 +115,132 @@ class Model(torch.nn.Module):
 male_voices = []
 female_voices = []
 
-for audio in tqdm(os.listdir("wavfinal")):#[4150:5100]):
+#load audio in lists
+for audio in tqdm(os.listdir("wavfinal")):#[4150:5100]): #
     # print(audio)
-    if audio.split("_")[0] == "f" and len(female_voices)<500:
+    if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
         female_voices.append(librosa.load("wavfinal/" + audio))
-    elif audio.split("_")[0] == "m" and len(male_voices)<500:
+    elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
         male_voices.append(librosa.load("wavfinal/" + audio))
 
-male_features = np.zeros(shape=(1, N_MFCC))
+male_features = np.zeros(shape=(1, N_MFCC)) # initialize mfcc arrays
 female_features = np.zeros(shape=(1, N_MFCC))
-for temp3 in tqdm(female_voices):
-    female_features = np.vstack((female_features, np.transpose(mfcc(y=temp3[0], sr=temp3[1], n_mfcc=N_MFCC)[:100], (1, 0))))
-for temp3 in tqdm(male_voices):
-    male_features = np.vstack((male_features, np.transpose(mfcc(y=temp3[0], sr=temp3[1], n_mfcc=N_MFCC)[:100], (1, 0))))
-female_features = female_features[1:]
+
+#extract mfcc
+for female_voice in tqdm(female_voices):
+    content, sr = female_voice
+    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:100]#so that SVC doesnt take forever to fit
+    female_features = np.vstack((female_features, np.transpose(extract_mfcc)))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+for male_voice in tqdm(male_voices):
+    content, sr = male_voice
+    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)
+    male_features = np.vstack((male_features, np.transpose(extract_mfcc)))
+
+female_features = female_features[1:]#remove first vector(empty)
 male_features = male_features[1:]
-X = np.vstack((male_features, female_features))
-X = (X - X.min(axis=0))/(X.max(axis=0) - X.min(axis=0))
-print(X)
-Y = np.append([0] * len(male_features), [1] * len(female_features))
-print(X.shape, Y.shape)
+
+X = np.vstack((male_features, female_features))#combine both genders in one dataset
+X = (X - X.min(axis=0))/(X.max(axis=0) - X.min(axis=0))# normalize 0-1
+# print(X)
+Y = np.append([0] * len(male_features), [1] * len(female_features))#expected output array
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=0.7)
 
-clf = SVC(kernel='rbf')
+#SVM approach
+#SVC uses mfcc from individual windows, not together in a sample
+
+clf = SVC(kernel='poly')
 print("fitting")
 timesince = time.time()
 clf.fit(X_train[:50000], Y_train[:50000])
-print("time in seconds:", time.time() - timesince)
-print()
+print("time in seconds:", time.time() - timesince, "\n")
+
 print("validating")
 timesince = time.time()
 print("score: ", clf.score(X_train[:50000], Y_train[:50000]))
-print("time in seconds: ", time.time() - timesince)
-print()
+print("time in seconds: ", time.time() - timesince, "\n")
+
 print("testing")
 timesince = time.time()
 print("score:", clf.score(X_test[:50000], Y_test[:50000]))
-print("time in sconds: ", time.time() - timesince)
+print("time in seconds: ", time.time() - timesince, "\n")
+
+#confusion matrix and metrics
 
 predicted = clf.predict(X_test[:50000])
+c_d = metrics.confusion_matrix(Y_test[:50000], predicted)
+c_d = c_d/1.0
 
-result = metrics.ConfusionMatrixDisplay(confusion_matrix = metrics.confusion_matrix(Y_test[:50000], predicted), display_labels = ["Male", "Female"])
+accuracy = (c_d[0, 0] + c_d[1, 1])/np.sum(c_d)
+precision = c_d[0, 0]/(c_d[0, 0] + c_d[0, 1])
+recall = c_d[0, 0]/(c_d[0, 0] + c_d[1, 0])
+f1 = 2*precision*recall/(precision + recall)
+print("male")
+print("accuracy:", round(accuracy, 3), "precision:", round(precision, 3), "recall:", round(recall, 3), "f1:", round(f1, 3))
+
+accuracy = (c_d[0, 0] + c_d[1, 1])/np.sum(c_d)
+precision = c_d[1, 1]/(c_d[1, 1] + c_d[1, 0])
+recall = c_d[1, 1]/(c_d[1, 1] + c_d[0, 1])
+f1 = 2*precision*recall/(precision + recall)
+print()
+print("female")
+print("accuracy:", round(accuracy, 3), "precision:", round(precision, 3), "recall:", round(recall, 3), "f1:", round(f1, 3))
+
+print(c_d)
+c_d = c_d.astype(int)
+# create confusion matrix plot from generated matrix
+result = metrics.ConfusionMatrixDisplay(confusion_matrix = c_d, display_labels = ["Male", "Female"])
 result.plot()
 plt.show()
 
-class Dataset:
-    def __init__(self):
-        super().__init__()
-        self.Y = Y
+#DNN approach
 
-        self.Y_prob = np.zeros((len(self.Y), 2))
-        idxes_range = range(len(self.Y))
-        self.Y_prob[idxes_range, self.Y] = 1
-        print(self.Y_prob)
-
-        self.X = X
-        X_max = np.max(self.X, axis=0) # (7, )
-        X_min = np.min(self.X, axis=0)
-        self.X = (self.X - X_min)/(X_max - X_min)
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, idx):
-        return np.array(self.X[idx]), np.array(self.Y_prob[idx])
-
-dataset_full = Dataset()
-
-dataset_train = DataLoader(
+dataset_full = Dataset(X, Y)
+print("first dataset point", dataset_full[0])
+train_test_split = int(len(dataset_full)*TRAIN_TEST_SPLIT)
+dataset_train, dataset_test = torch.utils.data.random_split(
     dataset_full,
-    idx_start=0,
-    idx_end=int(TRAIN_TEST_SPLIT*len(dataset_full)),
-    batch_size=BATCH_SIZE
- )
-dataset_test = DataLoader(
-    dataset_full,
-    idx_start=int(TRAIN_TEST_SPLIT*len(dataset_full)),
-    idx_end=len(dataset_full),
-    batch_size=BATCH_SIZE
- )
+    [train_test_split, len(dataset_full)-train_test_split],
+    generator=torch.Generator().manual_seed(0)
+)
+
+dataloader_train = torch.utils.data.DataLoader(
+    dataset=dataset_train,
+    batch_size=BATCH_SIZE,
+    shuffle=True
+)
+
+dataloader_test = torch.utils.data.DataLoader(
+    dataset=dataset_test,
+    batch_size=BATCH_SIZE,
+    shuffle=False
+)
 
 model = Model()
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-metrics = {}
+metricsdict = {}
 for stage in ['train', 'test']:
     for metric in [
         'loss',
         'acc'
     ]:
-        metrics[f'{stage}_{metric}'] = []
+        metricsdict[f'{stage}_{metric}'] = []
 
 for epoch in range(1, EPOCHS+1):
-    for data_loader in [dataset_train, dataset_test]:
-        metrics_epoch = {key: [] for key in metrics.keys()}
+    for data_loader in [dataloader_train, dataloader_test]:
+        metrics_epoch = {key: [] for key in metricsdict.keys()}
 
         stage = 'train'
-        if data_loader == dataset_test:
+        if data_loader == dataloader_test:
             stage = 'test'
 
-        for x, y in data_loader:
-
+        for x, y in tqdm(data_loader):
+            # print(model.encoder[0].weight)
+            # print(torch.Tensor(x))
             y_prim = model.forward(x)
 
             loss = torch.mean(-y * torch.log(y_prim + 1e-8))
 
-            if data_loader == dataset_train:
+            if data_loader == dataloader_train:
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
@@ -214,18 +260,44 @@ for epoch in range(1, EPOCHS+1):
         for key in metrics_epoch.keys():
             if stage in key:
                 value = np.mean(metrics_epoch[key])
-                metrics[key].append(value)
-                metrics_strs.append(f'{key}: {round(value, 2)}')
+                metricsdict[key].append(value)
+                metrics_strs.append(f'{key}: {round(value, 3)}')
 
         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
     if epoch % 10 == 0:
         plts = []
         c = 0
-        for key, value in metrics.items():
+        for key, value in metricsdict.items():
             plts += plt.plot(value, f'C{c}', label=key)
             ax = plt.twinx()
             c += 1
 
         plt.legend(plts, [it.get_label() for it in plts])
+        plt.show()
+
+        predicted = model.forward(dataset_test[:][0])
+        predicted = np.argmax(predicted.cpu().data.numpy(), axis=1)
+        expected = np.argmax(dataset_test[:][1].cpu().data.numpy(), axis=1)
+
+        # confusion matrix and metrics
+        c_d = metrics.confusion_matrix(expected, predicted)
+        c_d = c_d/1.0
+        accuracy = (c_d[0, 0] + c_d[1, 1])/np.sum(c_d)
+        precision = c_d[0, 0]/(c_d[0, 0] + c_d[0, 1])
+        recall = c_d[0, 0]/(c_d[0, 0] + c_d[1, 0])
+        f1 = 2*precision*recall/(precision + recall)
+        print("male")
+        print("accuracy:", round(accuracy, 3), "precision:", round(precision, 3), "recall:", round(recall, 3), "f1:", round(f1, 3))
+        accuracy = (c_d[0, 0] + c_d[1, 1])/np.sum(c_d)
+        precision = c_d[1, 1]/(c_d[1, 1] + c_d[1, 0])
+        recall = c_d[1, 1]/(c_d[1, 1] + c_d[0, 1])
+        f1 = 2*precision*recall/(precision + recall)
+        print()
+        print("female")
+        print("accuracy:", round(accuracy, 3), "precision:", round(precision, 3), "recall:", round(recall, 3), "f1:", round(f1, 3))
+        print(c_d)
+        c_d = c_d.astype(int)
+        result = metrics.ConfusionMatrixDisplay(confusion_matrix = c_d, display_labels = ["Male", "Female"])
+        result.plot()
         plt.show()

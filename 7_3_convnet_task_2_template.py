@@ -71,8 +71,10 @@ class Model(torch.nn.Module):
             nn.MaxPool2d(kernel_size=2, stride=2, padding=1),
             nn.Conv2d(in_channels=9, out_channels=end_channels, kernel_size=3, stride=1, padding=1)
         )
-        
-        end_size=out_size(out_size(out_size(out_size(out_size(INPUT_SIZE, 3, 1, 1), 2, 2, 1), 3, 1, 1), 2, 2, 1), 3, 1, 1)
+        firstConvPool = out_size(in_size=out_size(in_size=INPUT_SIZE, kern=3, str=1, pad=1), kern=2, str=2, pad=1)
+        secondConvPool = out_size(in_size=out_size(in_size=firstConvPool, kern=3, str=1, pad=1), kern=2, str=2, pad=1)
+        thirdConvPool = out_size(in_size=secondConvPool, kern=3, str=1, pad=1)
+        end_size = thirdConvPool
         # print(end_size)
         self.fc = nn.Linear(
             in_features=end_channels*end_size*end_size,

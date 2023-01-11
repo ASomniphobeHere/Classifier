@@ -9,6 +9,7 @@ import pickle
 import torch.utils.data
 import torch.nn.functional as F
 from tqdm import tqdm
+import time
 
 # matplotlib.use('TkAgg')
 plt.rcParams["figure.figsize"] =(15, 5)
@@ -18,7 +19,7 @@ LEARNING_RATE = 1e-4
 BATCH_SIZE = 128
 MAX_LEN = 0
 TRAIN_TEST_SPLIT = 0.7
-DEVICE = 'cuda:0'
+DEVICE = 'cpu'
 
 #TODO
 
@@ -254,7 +255,6 @@ for epoch in range(1, 100):
             stage = 'test'
 
         for x, y in tqdm(data_loader):
-            
             x=x.to(DEVICE)
             y=y.to(DEVICE)
             #TODO
