@@ -19,8 +19,8 @@ N_MFCC = 30# mfcc extracted
 TRAIN_TEST_SPLIT = 0.7
 LEARNING_RATE = 0.005
 EPOCHS = 1000
-LIM_SIZE = 500#limit sample size for each gender
-MFCC_LIM_SIZE = 100#make sure mfcc used in a row divides this
+LIM_SIZE = 1000#limit sample size for each gender
+MFCC_LIM_SIZE = 100#make sure mfcc used in a sample divides this
 
 torch.set_default_dtype(torch.float32)
 
@@ -149,7 +149,7 @@ female_features = female_features.transpose()
 male_features = male_features.transpose()
 female_features = female_features[1:]#remove first vector(empty)
 male_features = male_features[1:]
-# female_features = female_features.reshape(-1, 3*3*N_MFCC)
+# female_features = female_features.reshape(-1, 3*3*N_MFCC)# n*3*N_MFCC, n mfcc used in a sample
 # male_features = male_features.reshape(-1, 3*3*N_MFCC)
 print(male_features.shape)
 
