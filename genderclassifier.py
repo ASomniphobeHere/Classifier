@@ -19,7 +19,7 @@ N_MFCC = 30# mfcc extracted
 TRAIN_TEST_SPLIT = 0.7
 LEARNING_RATE = 0.005
 EPOCHS = 1000
-LIM_SIZE = 1000#limit sample size for each gender
+LIM_SIZE = 10000#limit sample size for each gender
 MFCC_LIM_SIZE = 100#make sure mfcc used in a sample divides this
 
 torch.set_default_dtype(torch.float32)
@@ -115,12 +115,12 @@ male_voices = []
 female_voices = []
 
 #load audio in lists
-for audio in tqdm(os.listdir("wavfinal")):#[4150:5100]): #
+for audio in tqdm(os.listdir("libriwavfinal")):#[4150:5100]): #
     # print(audio)
     if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
-        female_voices.append(librosa.load("wavfinal/" + audio))
+        female_voices.append(librosa.load("libriwavfinal/" + audio))
     elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
-        male_voices.append(librosa.load("wavfinal/" + audio))
+        male_voices.append(librosa.load("libriwavfinal/" + audio))
 
 male_features = np.zeros(shape=(3*N_MFCC, 1)) # initialize mfcc arrays
 female_features = np.zeros(shape=(3*N_MFCC, 1))
@@ -152,7 +152,7 @@ male_features = male_features[1:]
 # female_features = female_features.reshape(-1, 3*3*N_MFCC)# n*3*N_MFCC, n mfcc used in a sample
 # male_features = male_features.reshape(-1, 3*3*N_MFCC)
 print(male_features.shape)
-
+print(female_features.shape)
 X = np.vstack((male_features, female_features))#combine both genders in one dataset
 X = (X - X.min(axis=0))/(X.max(axis=0) - X.min(axis=0))# normalize 0-1
 # print(X)
