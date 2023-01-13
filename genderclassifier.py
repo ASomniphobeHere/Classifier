@@ -29,18 +29,6 @@ SAVE_MODEL = False
 
 torch.set_default_dtype(torch.float32)
 
-def remove_silence(audiosample): #returns audio sample with each silence reduced to 100 ms
-    audiochunks = split_on_silence(
-        audiosample,
-        min_silence_len=100,
-        silence_thresh=-45,
-        keep_silence=50
-    )
-    result = AudioSegment.empty()
-    for chunk in audiochunks:
-        result+=chunk
-    return result
-
 class DataLoader:
     def __init__(
             self,
@@ -105,16 +93,6 @@ class Model(torch.nn.Module):
         out = self.encoder.forward(x)
         y_prim = torch.softmax(out, dim=-1)
         return y_prim
-
-
-# #export to wav and combine to one folder with labels, DO ONLY ONCE
-# for temp2 in tqdm(os.listdir(r"wav/females")):#[:50]):
-#     audio = remove_silence(AudioSegment.from_wav("wav/females/" + temp2))
-#     audio.export("wavfinal/f_"+temp2, "wav")
-# prepare starting dataset
-# for temp2 in tqdm(os.listdir(r"wav/males")):#[:50]):
-#     audio = remove_silence(AudioSegment.from_wav("wav/males/" + temp2))
-#     audio.export("wavfinal/m_"+temp2, "wav")
 
 def loadaudio(path):
     male_voices = []

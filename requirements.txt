@@ -1,0 +1,12 @@
+pip
+librosa
+os
+numpy
+matplotlib
+tqdm
+sklearn
+pydub
+torch
+pickle
+time
+datetime
