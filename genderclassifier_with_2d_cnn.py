@@ -17,15 +17,16 @@ import pickle
 from datetime import datetime
 
 BATCH_SIZE = 16
-N_MFCC = 30# mfcc extracted
+N_MFCC = 40# mfcc extracted
 TRAIN_TEST_SPLIT = 0.6
-LEARNING_RATE = 0.005
+LEARNING_RATE = 0.001
 EPOCHS = 1000
 LIM_SIZE = 10000#limit sample size for each gender
-MFCC_LIM_SIZE_UPPER = 100#make sure mfcc used in a sample divides this
+MFCC_LIM_SIZE_UPPER = 60#make sure mfcc used in a sample divides this
 MFCC_LIM_SIZE_LOWER = MFCC_LIM_SIZE_UPPER
-USE_SAVED_MODEL = True
-SAVE_MODEL = False
+USE_SAVED_DATASET = False
+SAVE_DATASET = False
+DEVICE = "cuda:0"
 
 torch.set_default_dtype(torch.float32)
 
@@ -99,22 +100,26 @@ class Model(torch.nn.Module):
             nn.BatchNorm2d(num_features=32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+            nn.Dropout(0.2),
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 9), padding='same'),
             nn.BatchNorm2d(num_features=32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+            nn.Dropout(0.2),
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 9), padding='same'),
             nn.BatchNorm2d(num_features=32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+            nn.Dropout(0.2),
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 9), padding='same'),
             nn.BatchNorm2d(num_features=32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=2),
             nn.Flatten(),
-            nn.Linear(in_features=192, out_features=64),
+            nn.Linear(in_features=192, out_features=64, device=DEVICE),
+            nn.Dropout(0.2),
             nn.ReLU(),
-            nn.Linear(in_features=64, out_features=2)
+            nn.Linear(in_features=64, out_features=2, device=DEVICE)
         )
 
     def forward(self, x):
@@ -131,69 +136,82 @@ class Model(torch.nn.Module):
 # for temp2 in tqdm(os.listdir(r"wav/males")):#[:50]):
 #     audio = remove_silence(AudioSegment.from_wav("wav/males/" + temp2))
 #     audio.export("wavfinal/m_"+temp2, "wav")
+if USE_SAVED_DATASET:
+    with open("MFCC_saved.pickle", "rb") as handle:
+        dataset_train, dataset_test = pickle.load(handle)
+else:
+    def loadaudio(path):
+        male_voices = []
+        female_voices = []
 
-male_voices = []
-female_voices = []
+        #load audio in lists
+        for audio in tqdm(os.listdir(path)):#[4150:5100]): #
+            # print(audio)
+            if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
+                female_voices.append(librosa.load(path+"/" + audio))
+            elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
+                male_voices.append(librosa.load(path+"/" + audio))
+        return male_voices, female_voices
 
-#load audio in lists
-for audio in tqdm(os.listdir("libriwavfinal")):#[4150:5100]): #
-    # print(audio)
-    if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
-        female_voices.append(librosa.load("libriwavfinal/" + audio))
-    elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
-        male_voices.append(librosa.load("libriwavfinal/" + audio))
+    male_voices_train, female_voices_train = loadaudio("libriwavtrain")
+    male_voices_test, female_voices_test = loadaudio("libriwavtest")
 
-male_features = np.zeros(shape=(1, 3, N_MFCC, MFCC_LIM_SIZE_UPPER)) # initialize mfcc arrays
-female_features = np.zeros(shape=(1, 3, N_MFCC, MFCC_LIM_SIZE_UPPER))
 
-#extract mfcc
-for female_voice in tqdm(female_voices):
-    content, sr = female_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
-    if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
-        continue
-    delta1 = librosa.feature.delta(extract_mfcc)
-    delta2 = librosa.feature.delta(extract_mfcc, order=2)
-    extract_mfcc = np.expand_dims(np.array([extract_mfcc, delta1, delta2]), axis=0)
-    female_features = np.vstack((female_features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+    def extract_features(voices):
+        features = np.zeros(shape=(1, 3, N_MFCC, MFCC_LIM_SIZE_UPPER))
+        for voice in tqdm(voices):
+            content, sr = voice
+            extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
+            if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
+                print("snipped a short file")
+                continue
+            delta1 = librosa.feature.delta(extract_mfcc)
+            delta2 = librosa.feature.delta(extract_mfcc, order=2)
+            extract_mfcc = np.expand_dims(np.array([extract_mfcc, delta1, delta2]), axis=0)
+            features = np.vstack((features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+        features = features[1:]#remove first layer(empty)
+        return features
 
-for male_voice in tqdm(male_voices):
-    content, sr = male_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
-    if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
-        continue
-    delta1 = librosa.feature.delta(extract_mfcc)
-    delta2 = librosa.feature.delta(extract_mfcc, order=2)
-    extract_mfcc = np.expand_dims(np.array([extract_mfcc, delta1, delta2]), axis=0)
-    male_features = np.vstack((male_features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+    male_features_train = extract_features(male_voices_train)
+    female_features_train = extract_features(female_voices_train)
+    male_features_test = extract_features(male_voices_test)
+    female_features_test = extract_features(female_voices_test)
+    #normalize and prepare datasets
 
-female_features = female_features[1:]#remove first vector(empty)
-male_features = male_features[1:]
-# female_features = female_features.reshape(-1, 3*3*N_MFCC)# n*3*N_MFCC, n mfcc used in a sample
-# male_features = male_features.reshape(-1, 3*3*N_MFCC)
-print(male_features.shape)
-print(female_features.shape)
+    def preparedatasets(male_features, female_features):
+        X = np.vstack((male_features, female_features))#combine both genders in one dataset
+        X_max = np.expand_dims(X.max(axis=(0, 3)), axis=(0, -1))
+        X_min = np.expand_dims(X.min(axis=(0, 3)), axis=(0, -1))
+        global X_global_min
+        X_global_min = X_min
+        global X_global_max
+        X_global_max = X_max
+        X = (X - X_min)/(X_max - X_min)# normalize 0-1
+        print(X.shape)
+        # print(X)
+        Y = np.append([0] * len(male_features), [1] * len(female_features))
+        return X, Y
 
-#normalize and prepare datasets
+    X_train, Y_train = preparedatasets(male_features_train, female_features_train)
+    X_test, Y_test = preparedatasets(male_features_test, female_features_test)
+    #shuffle the dataset(for testing dataset)
+    p1 = np.random.permutation(len(X_train))
+    p2 = np.random.permutation(len(X_test))
+    X_train = X_train[p1]
+    Y_train = Y_train[p1]
+    X_test = X_test[p2]
+    Y_test = Y_test[p2]
 
-X = np.vstack((male_features, female_features))#combine both genders in one dataset
-X_max = np.expand_dims(X.max(axis=(0, 3)), axis=(0, -1))
-X_min = np.expand_dims(X.min(axis=(0, 3)), axis=(0, -1))
-X = (X - X_min)/(X_max - X_min)# normalize 0-1
-# print(X)
-Y = np.append([0] * len(male_features), [1] * len(female_features))#expected output array
+    now = datetime.now()
+    current_time = now.strftime("%H:%M:%S")
+    print("Current Time =", current_time)
 
-now = datetime.now()
-current_time = now.strftime("%H:%M:%S")
-print("Current Time =", current_time)
+    dataset_train = Dataset(X_train, Y_train)
+    dataset_test = Dataset(X_test, Y_test)
 
-dataset_full = Dataset(X, Y)
-train_test_split = int(len(dataset_full)*TRAIN_TEST_SPLIT)
-dataset_train, dataset_test = torch.utils.data.random_split(
-    dataset_full,
-    [train_test_split, len(dataset_full)-train_test_split],
-    generator=torch.Generator().manual_seed(0)
-)
+if SAVE_DATASET:
+    with open("MFCC_saved.pickle", "wb") as handle:
+        pickle.dump([dataset_train, dataset_test], handle, protocol=4)
 
 dataloader_train = torch.utils.data.DataLoader(
     dataset=dataset_train,
@@ -208,6 +226,7 @@ dataloader_test = torch.utils.data.DataLoader(
 )
 
 model = Model()
+model = model.to(DEVICE)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 metricsdict = {}
 for stage in ['train', 'test']:
@@ -228,12 +247,15 @@ for epoch in range(1, EPOCHS+1):
         for x, y in tqdm(data_loader):
             # print(model.encoder[0].weight)
             # print(torch.Tensor(x))
+            x=x.to(DEVICE)
+            y=y.to(DEVICE)
             y_prim = model.forward(x)
 
             loss = torch.mean(-y * torch.log(y_prim + 1e-8))
-
             if data_loader == dataloader_train:
                 loss.backward()
+                if len(metricsdict["test_acc"]) > 0 and (metricsdict["test_acc"][-1] >= 0.86):
+                    optimizer.zero_grad()
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -254,10 +276,10 @@ for epoch in range(1, EPOCHS+1):
                 value = np.mean(metrics_epoch[key])
                 metricsdict[key].append(value)
                 metrics_strs.append(f'{key}: {round(value, 3)}')
-
         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
     if epoch % 10 == 0:
+        time.sleep(1)
         plts = []
         c = 0
         for key, value in metricsdict.items():
@@ -267,10 +289,27 @@ for epoch in range(1, EPOCHS+1):
         plt.legend(plts, [it.get_label() for it in plts])
         plt.show()
 
-        predicted = model.forward(dataset_test[:][0])
+        #for testing the generate audio
+
+        gen_audio = librosa.load("boy2.wav")
+        content, sr = gen_audio
+        extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
+        if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
+            print("snipped a short file", extract_mfcc.shape[1])
+            continue
+        delta1 = librosa.feature.delta(extract_mfcc)
+        delta2 = librosa.feature.delta(extract_mfcc, order=2)
+        extract_mfcc = np.expand_dims(np.array([extract_mfcc, delta1, delta2]), axis=0)
+        extract_mfcc = (extract_mfcc - X_global_min)/(X_global_max - X_global_min)
+        extract_mfcc = torch.Tensor(extract_mfcc).to(DEVICE)
+        predicted = model.forward(extract_mfcc.to(DEVICE))
+        print(predicted.data)
+
+        #confusion matrix
+
+        predicted = model.forward(dataset_test[:][0].to(DEVICE))
         predicted = np.argmax(predicted.cpu().data.numpy(), axis=1)
         expected = np.argmax(dataset_test[:][1].cpu().data.numpy(), axis=1)
-
         # confusion matrix and metrics
         c_d = metrics.confusion_matrix(expected, predicted)
         c_d = c_d/1.0

@@ -2,4 +2,6 @@ venv
 wav
 m4a
 dev-clean
-libriwavfinal
+libriwavtrain
+libriwavtest
+test-clean

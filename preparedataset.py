@@ -26,7 +26,7 @@ speakerinfo = np.asarray(speakerinfo)
 counter=0
 totlength=0# for metadata
 
-for subdir, dirs, files in os.walk("dev-clean"):
+for subdir, dirs, files in os.walk("test-clean"):
     for file in files:
 
         filename = os.path.join(subdir, file)
@@ -42,9 +42,9 @@ for subdir, dirs, files in os.walk("dev-clean"):
             audio = remove_silence(AudioSegment.from_file(filename))#from flac
             totlength+=audio.duration_seconds#add to total dataset duration
             if speakergender == 1:#female
-                exportfilename = 'libriwavfinal/f_' + str(speakerid) + '_' + chapterid + '.wav'
+                exportfilename = 'libriwavtest/f_' + str(speakerid) + '_' + chapterid + '.wav'
             elif speakergender == 0:#male
-                exportfilename = 'libriwavfinal/m_' + str(speakerid) + '_' + chapterid + '.wav'
+                exportfilename = 'libriwavtest/m_' + str(speakerid) + '_' + chapterid + '.wav'
             print(speakerid, chapterid)
             audio.export(exportfilename, 'wav') # export as wav to end dir
         except:

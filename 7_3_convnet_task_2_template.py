@@ -8,7 +8,7 @@ import torch.nn.functional
 
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
-MAX_LEN = 200
+MAX_LEN = 10000
 INPUT_SIZE = 28
 DEVICE = 'cuda:0'
 EPOCHS = 100
@@ -69,7 +69,8 @@ class Model(torch.nn.Module):
             nn.Conv2d(in_channels=5, out_channels=9, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=1),
-            nn.Conv2d(in_channels=9, out_channels=end_channels, kernel_size=3, stride=1, padding=1)
+            nn.Conv2d(in_channels=9, out_channels=end_channels, kernel_size=3, stride=1, padding=1),
+            nn.Dropout(0.25)
         )
         firstConvPool = out_size(in_size=out_size(in_size=INPUT_SIZE, kern=3, str=1, pad=1), kern=2, str=2, pad=1)
         secondConvPool = out_size(in_size=out_size(in_size=firstConvPool, kern=3, str=1, pad=1), kern=2, str=2, pad=1)
@@ -141,7 +142,7 @@ for epoch in range(1, EPOCHS+1):
             if stage in key:
                 value = np.mean(metrics_epoch[key])
                 metrics[key].append(value)
-                metrics_strs.append(f'{key}: {round(value, 2)}')
+                metrics_strs.append(f'{key}: {round(value, 3)}')
 
         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 

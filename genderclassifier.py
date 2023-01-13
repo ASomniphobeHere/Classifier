@@ -23,8 +23,8 @@ LEARNING_RATE = 0.005
 EPOCHS = 1000
 LIM_SIZE = 10000#limit sample size for each gender
 MFCC_LIM_SIZE_UPPER = 100#make sure mfcc used in a sample divides this
-MFCC_LIM_SIZE_LOWER = MFCC_LIM_SIZE_UPPER
-USE_SAVED_MODEL = True
+MFCC_LIM_SIZE_LOWER = 20
+USE_SAVED_MODEL = False
 SAVE_MODEL = False
 
 torch.set_default_dtype(torch.float32)
@@ -116,73 +116,63 @@ class Model(torch.nn.Module):
 #     audio = remove_silence(AudioSegment.from_wav("wav/males/" + temp2))
 #     audio.export("wavfinal/m_"+temp2, "wav")
 
-male_voices = []
-female_voices = []
+def loadaudio(path):
+    male_voices = []
+    female_voices = []
 
+    #load audio in lists
+    for audio in tqdm(os.listdir(path)):#[4150:5100]): #
+        # print(audio)
+        if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
+            female_voices.append(librosa.load(path+"/" + audio))
+        elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
+            male_voices.append(librosa.load(path+"/" + audio))
+    return male_voices, female_voices
 
-#load audio in lists
-
-
-for audio in tqdm(os.listdir("libriwavfinal")):#[4150:5100]): #
-    # print(audio)
-    if audio.split("_")[0] == "f" and len(female_voices)<LIM_SIZE:# second half for testing and shorter runtime
-        female_voices.append(librosa.load("libriwavfinal/" + audio))
-    elif audio.split("_")[0] == "m" and len(male_voices)<LIM_SIZE:
-        male_voices.append(librosa.load("libriwavfinal/" + audio))
-
-male_features = np.zeros(shape=(3*N_MFCC, 1)) # initialize mfcc arrays
-female_features = np.zeros(shape=(3*N_MFCC, 1))
-
-
+male_voices_train, female_voices_train = loadaudio("libriwavtrain")
+male_voices_test, female_voices_test = loadaudio("libriwavtest")
 
 #extract mfcc features
+def extract_features(voices):
+    features = np.zeros(shape=(3*N_MFCC, 1))
+    for voice in tqdm(voices):
+        content, sr = voice
+        extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
+        if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
+            continue
+        delta1 = librosa.feature.delta(extract_mfcc)
+        delta2 = librosa.feature.delta(extract_mfcc, order=2)
+        extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
+        features = np.hstack((features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+    features = features.transpose()
+    features = features[1:]#remove first layer(empty)
+    return features
 
 
+male_features_train = extract_features(male_voices_train)
+female_features_train = extract_features(female_voices_train)
+male_features_test = extract_features(male_voices_test)
+female_features_test = extract_features(female_voices_test)
 
-for female_voice in tqdm(female_voices):
-    content, sr = female_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
-    if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
-        continue
-    delta1 = librosa.feature.delta(extract_mfcc)
-    delta2 = librosa.feature.delta(extract_mfcc, order=2)
-    extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
-    print(extract_mfcc.shape)
-    female_features = np.hstack((female_features, extract_mfcc))#add the mfcc to feature arrays row-wise, combine mfcc in one big list
+def preparedatasets(male_features, female_features):
+    X = np.vstack((male_features, female_features))#combine both genders in one dataset
+    X_max = X.max(axis=0)
+    X_min = X.min(axis=0)
+    X = (X - X_min)/(X_max - X_min)# normalize 0-1
+    print(female_features.shape)
+    print(male_features.shape)
+    # print(X)
+    Y = np.append([0] * len(male_features), [1] * len(female_features))
+    return X, Y
 
-for male_voice in tqdm(male_voices):
-    content, sr = male_voice
-    extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]
-    if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
-        continue
-    delta1 = librosa.feature.delta(extract_mfcc)
-    delta2 = librosa.feature.delta(extract_mfcc, order=2)
-    extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
-    male_features = np.hstack((male_features, extract_mfcc))
-
-female_features = female_features.transpose()
-male_features = male_features.transpose()
-female_features = female_features[1:]#remove first vector(empty)
-male_features = male_features[1:]
-# female_features = female_features.reshape(-1, 3*3*N_MFCC)# n*3*N_MFCC, n mfcc used in a sample
-# male_features = male_features.reshape(-1, 3*3*N_MFCC)
-
-
-#prepare datasets
-
-
-print(male_features.shape)
-print(female_features.shape)
-X = np.vstack((male_features, female_features))#combine both genders in one dataset
-X_max = X.max(axis=0)
-X_min = X.min(axis=0)
-X = (X - X_min)/(X_max - X_min)# normalize 0-1
-# print(X)
-Y = np.append([0] * len(male_features), [1] * len(female_features))#expected output array
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=0.7)
-
-
-
+X_train, Y_train = preparedatasets(male_features_train, female_features_train)
+X_test, Y_test = preparedatasets(male_features_test, female_features_test)
+p1 = np.random.permutation(len(X_train))
+p2 = np.random.permutation(len(X_test))
+X_train = X_train[p1]
+Y_train = Y_train[p1]
+X_test = X_test[p2]
+Y_test = Y_test[p2]
 #SVM approach
 #SVC uses mfcc from individual windows, not together in a sample
 
@@ -217,25 +207,6 @@ if SAVE_MODEL:
     with open("SVC_saved.pickle", "wb") as handle:
         pickle.dump(clf, handle, protocol=4)
 
-#confusion matrix and metrics, test an unseen sample
-generated_voice = librosa.load("boy2girl.wav")
-gen_features = np.zeros(shape=(3*N_MFCC, 1))
-content, sr = generated_voice
-extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)
-delta1 = librosa.feature.delta(extract_mfcc)
-delta2 = librosa.feature.delta(extract_mfcc, order=2)
-extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
-gen_features = np.hstack((gen_features, extract_mfcc))
-gen_features = gen_features.transpose()
-gen_features = gen_features[1:]
-gen_features = (gen_features - X_min)/(X_max - X_min)
-print(gen_features.shape)
-gen_predict = clf.predict(gen_features[:])
-print(np.count_nonzero(gen_predict == 1), "say it's female")
-print(np.count_nonzero(gen_predict == 0), "say it's male")
-
-
-
 predicted = clf.predict(X_test[:10000])
 c_d = metrics.confusion_matrix(Y_test[:10000], predicted)
 c_d = c_d/1.0
@@ -264,13 +235,9 @@ plt.show()
 
 #DNN approach
 
-dataset_full = Dataset(X, Y)
-train_test_split = int(len(dataset_full)*TRAIN_TEST_SPLIT)
-dataset_train, dataset_test = torch.utils.data.random_split(
-    dataset_full,
-    [train_test_split, len(dataset_full)-train_test_split],
-    generator=torch.Generator().manual_seed(0)
-)
+dataset_train = Dataset(X_train, Y_train)
+dataset_test = Dataset(X_test, Y_test)
+
 
 dataloader_train = torch.utils.data.DataLoader(
     dataset=dataset_train,
