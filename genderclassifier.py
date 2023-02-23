@@ -132,6 +132,9 @@ female_features_train = extract_features(female_voices_train)
 male_features_test = extract_features(male_voices_test)
 female_features_test = extract_features(female_voices_test)
 
+X_max = 0
+X_min = 0
+
 def preparedatasets(male_features, female_features):
     X = np.vstack((male_features, female_features))#combine both genders in one dataset
     X_max = X.max(axis=0)
@@ -210,6 +213,22 @@ c_d = c_d.astype(int)
 result = metrics.ConfusionMatrixDisplay(confusion_matrix = c_d, display_labels = ["Male", "Female"])
 result.plot()
 plt.show()
+
+generated_voice = librosa.load("output_copy2.wav")
+gen_features = np.zeros(shape=(3*N_MFCC, 1))
+content, sr = generated_voice
+extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)
+delta1 = librosa.feature.delta(extract_mfcc)
+delta2 = librosa.feature.delta(extract_mfcc, order=2)
+extract_mfcc = np.vstack((extract_mfcc, delta1, delta2))
+gen_features = np.hstack((gen_features, extract_mfcc))
+gen_features = gen_features.transpose()
+gen_features = gen_features[1:]
+gen_features = (gen_features - X_min)/(X_max - X_min)
+print(gen_features.shape)
+gen_predict = clf.predict(gen_features[:])
+print(np.count_nonzero(gen_predict == 1), "say it's female")
+print(np.count_nonzero(gen_predict == 0), "say it's male")
 
 #DNN approach
 

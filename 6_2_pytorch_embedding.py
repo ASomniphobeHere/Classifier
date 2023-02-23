@@ -80,11 +80,11 @@ class Model(torch.nn.Module):
         super().__init__()
 
         self.layers = torch.nn.Sequential(
-            torch.nn.Linear(in_features=2 + 4*3, out_features=8),
+            torch.nn.Linear(in_features=2 + 4*3, out_features=40),
             torch.nn.Sigmoid(),
-            torch.nn.Linear(in_features=8, out_features=4),
+            torch.nn.Linear(in_features=40, out_features=40),
             torch.nn.Sigmoid(),
-            torch.nn.Linear(in_features=4, out_features=1)
+            torch.nn.Linear(in_features=40, out_features=1)
         )
 
         self.embs = torch.nn.ModuleList()

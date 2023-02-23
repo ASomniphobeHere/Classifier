@@ -270,7 +270,7 @@ for epoch in range(1, EPOCHS+1):
 
         #for testing the generate audio
 
-        gen_audio = librosa.load("boy2.wav")
+        gen_audio = librosa.load("output_copy2.wav")
         content, sr = gen_audio
         extract_mfcc = mfcc(y=content, sr=sr, n_mfcc=N_MFCC)[:, :MFCC_LIM_SIZE_UPPER]#so that SVC doesnt take forever to fit
         if extract_mfcc.shape[1] < MFCC_LIM_SIZE_LOWER:
